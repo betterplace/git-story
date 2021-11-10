@@ -1,6 +1,6 @@
 ---
 pivotal_token:   <%= ENV['PIVOTAL_TOKEN'] %>
-pivotal_project: 123456789
+pivotal_project: 1254912
 pivotal_reference_prefix: pivotal
 deploy_tag_prefix: production_deploy_
 semaphore_auth_token: <%= ENV['SEMAPHORE_AUTH_TOKEN'] %>

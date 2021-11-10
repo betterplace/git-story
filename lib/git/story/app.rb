@@ -100,31 +100,9 @@ class Git::Story::App
     end
   end
 
-  def provide_name(story_id = nil)
-    until story_id.present?
-      story_id = ask(prompt: 'Story id? ').strip
-    end
-    story_id = story_id.gsub(/[^0-9]+/, '')
-    @story_id = Integer(story_id)
-    if stories.any? { |s| s.story_id == @story_id }
-      @reason = "story for ##@story_id already created"
-      return
-    end
-    if name = fetch_story_name(@story_id)
-      name = normalize_name(
-        name,
-        max_size: 128 - 'story'.size - @story_id.to_s.size - 2 * ?_.size
-      ).full? || name
-      [ 'story', name, @story_id ] * ?_
-    else
-      @reason = "name for ##@story_id could not be fetched from tracker"
-      return
-    end
-  end
-
   command doc: '[STORY_ID] fetch status of current story, -n SECONDS refreshes'
   def status(story_id = current(check: true)&.[](/_(\d+)\z/, 1)&.to_i)
-    if story = fetch_story(story_id)
+    if story = fetch_story(story_id, with_owner: true)
       color_state =
         case cs = story.current_state
         when 'unscheduled', 'planned', 'unstarted'
@@ -147,20 +125,21 @@ class Git::Story::App
         else
           t
         end
-      owners = Array(fetch_story_owners(story_id)).map { |o| "#{o.name} <#{o.email}>" }
       result = <<~end
         Id: #{(?# + story.id.to_s).green}
         Name: #{story.name.inspect.bold}
         Type: #{color_type}
         Estimate: #{story.estimate.to_s.full? { |e| e.yellow.bold } || 'n/a'}
         State: #{color_state}
-        Branch: #{current_branch_checked?&.color('#ff5f00')}
         Labels: #{story.labels.map { |l| l.name.on_color(91) }.join(' ')}
-        Owners: #{owners.join(', ').yellow}
+        Owners: #{story.owners.map { |o| "%s <%s>" % [ o.name, o.email ] }.join(', ').yellow}
         Pivotal: #{story.url.color(33)}
       end
-      if url = github_url(current_branch_checked?)
-        result << "Github: #{url.color(33)}\n"
+      if branch = current_branch_checked? and url = github_url(current_branch_checked?)
+        result << <<~end
+          Github: #{url.color(33)}
+          Branch: #{branch.color('#ff5f00')}
+        end
       end
       result
     end
@@ -234,17 +213,35 @@ class Git::Story::App
     fetch_statuses(pivotal_ids) * (?┄ * Tins::Terminal.cols << ?\n)
   end
 
-  def fetch_statuses(pivotal_ids)
-    tg = ThreadGroup.new
-    pivotal_ids.each do |pid|
-      tg.add Thread.new { Thread.current[:status] = status(pid) }
-    end
-    tg.list.with_infobar(label: 'Story').map do |t|
-      +infobar
-      t.join
-      t[:status]
+  command doc: '[REF] Create list of stories for deploy document'
+  def deploy_document(ref = default_ref, rest: [])
+    ref = build_ref_range(ref)
+    fetch_commits
+    fetch_tags
+    opts = ([
+      '--color=never',
+      '--pretty=%B'
+    ] | rest) * ' '
+    output = capture("git log #{opts} #{ref}")
+    pivotal_ids = SortedSet[]
+    output.scan(/\[\s*#\s*(\d+)\s*\]/) { pivotal_ids << $1.to_i }
+    fetch_stories(pivotal_ids) do |pid|
+      story = fetch_story(pid, with_owner: true)
+      <<~end
+      • [##{story.id}] #{story.name}
+        ○ Pivotal: https://www.pivotaltracker.com/story/show/#{pid}
+        ○ Type: #{story.story_type}
+        ○ Status: #{story.current_state}
+        ○ Owners: #{story.owners.map { |o| "%s <%s>" % [ o.name, o.email ] }.join(', ')}
+        ○ Tasks to be done before deployment:
+          ☐ …
+        ○ Tasks to be done after deployment:
+         ☐ …
+
+      end
     end
   end
+
 
   command doc: '[REF] output diff since last production deploy tag'
   def deploy_diff(ref = default_ref, rest: [])
@@ -276,8 +273,8 @@ class Git::Story::App
     "Story #{name} created.".green
   end
 
-  command doc: '[PATTERN] switch to story matching PATTERN'
-  def switch(pattern = nil)
+  command doc: 'switch to selected story branch'
+  def switch
     fetch_commits
     if branch = pick_branch(prompt: 'Switch to story? %s')
       sh "git checkout #{branch}"
@@ -285,7 +282,7 @@ class Git::Story::App
     end
   end
 
-  command doc: '[PATTERN] delete story branch matching PATTERN'
+  command doc: 'delete selected story branch'
   def delete(pattern = nil)
     fetch_commits
     if branch = pick_branch(prompt: 'Delete story branch? %s', symbol: ?⌦)
@@ -336,6 +333,28 @@ class Git::Story::App
   end
 
   private
+
+  def provide_name(story_id = nil)
+    until story_id.present?
+      story_id = ask(prompt: 'Story id? ').strip
+    end
+    story_id = story_id.gsub(/[^0-9]+/, '')
+    @story_id = Integer(story_id)
+    if stories.any? { |s| s.story_id == @story_id }
+      @reason = "story for ##@story_id already created"
+      return
+    end
+    if name = fetch_story_name(@story_id)
+      name = normalize_name(
+        name,
+        max_size: 128 - 'story'.size - @story_id.to_s.size - 2 * ?_.size
+      ).full? || name
+      [ 'story', name, @story_id ] * ?_
+    else
+      @reason = "name for ##@story_id could not be fetched from tracker"
+      return
+    end
+  end
 
   def determine_command
     c, command = [], nil
@@ -448,11 +467,6 @@ class Git::Story::App
     name
   end
 
-  def apply_pattern(pattern, stories)
-    pattern = pattern.gsub(?#, '')
-    stories.grep(/#{Regexp.quote(pattern)}/)
-  end
-
   def error(msg)
     puts msg.red
     exit 1
@@ -470,8 +484,10 @@ class Git::Story::App
     fetch_story(story_id)&.name
   end
 
-  def fetch_story(story_id)
-    pivotal_get("projects/#{pivotal_project}/stories/#{story_id}").full?
+  def fetch_story(story_id, with_owner: false)
+    story = pivotal_get("projects/#{pivotal_project}/stories/#{story_id}").full?
+    story.owners = Array((fetch_story_owners(story_id) if with_owner))
+    story
   end
 
   def fetch_story_owners(story_id)
@@ -585,5 +601,24 @@ class Git::Story::App
     url = remote_url('github') || remote_url or return
     url = url.sub('git@github.com:', 'https://github.com/')
     url = url.sub(/(\.git)\z/, "/tree/#{branch}")
+  end
+
+  def fetch_stories(pivotal_ids, &block)
+    block or raise ArgumentError, '&block parameter is required'
+    tg = ThreadGroup.new
+    pivotal_ids.each do |pid|
+      tg.add Thread.new { Thread.current[:result] = block.(pid) }
+    end
+    tg.list.with_infobar(label: 'Story').map do |t|
+      t.join
+      +infobar
+      t[:result]
+    end
+  end
+
+  def fetch_statuses(pivotal_ids)
+    fetch_stories(pivotal_ids) do |pid|
+      status(pid)
+    end
   end
 end

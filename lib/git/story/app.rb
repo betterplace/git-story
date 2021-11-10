@@ -213,7 +213,7 @@ class Git::Story::App
     fetch_statuses(pivotal_ids) * (?┄ * Tins::Terminal.cols << ?\n)
   end
 
-  command doc: '[REF] Create list of stories for deploy document'
+  command doc: '[REF] Create some parts of deploy document'
   def deploy_document(ref = default_ref, rest: [])
     ref = build_ref_range(ref)
     fetch_commits
@@ -225,9 +225,12 @@ class Git::Story::App
     output = capture("git log #{opts} #{ref}")
     pivotal_ids = SortedSet[]
     output.scan(/\[\s*#\s*(\d+)\s*\]/) { pivotal_ids << $1.to_i }
+    stories   = ''
+    attendees = Set[]
     fetch_stories(pivotal_ids) do |pid|
       story = fetch_story(pid, with_owner: true)
-      <<~end
+      attendees.merge story.owners
+      stories << <<~end
       • [##{story.id}] #{story.name}
         ○ Pivotal: https://www.pivotaltracker.com/story/show/#{pid}
         ○ Type: #{story.story_type}
@@ -237,8 +240,13 @@ class Git::Story::App
           ☐ …
         ○ Tasks to be done after deployment:
          ☐ …
-
       end
+    end
+    attendees.map! { |a| "• @#{a.email}" }
+    <<~end
+      #{attendees.join(?\n)}
+
+      #{stories}
     end
   end
 

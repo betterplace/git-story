@@ -205,7 +205,8 @@ class Git::Story::App
     fetch_tags
     opts = ([
       '--color=never',
-      '--pretty=%B'
+      '--pretty=%B',
+      '--reverse',
     ] | rest) * ' '
     output = capture("git log #{opts} #{ref}")
     pivotal_ids = SortedSet[]
@@ -615,13 +616,17 @@ class Git::Story::App
     block or raise ArgumentError, '&block parameter is required'
     tg = ThreadGroup.new
     pivotal_ids.each do |pid|
-      tg.add Thread.new { Thread.current[:result] = block.(pid) }
+      order = 0
+      tg.add Thread.new {
+        Thread.current[:order] = order
+        Thread.current[:result] = block.(pid)
+      }
     end
     tg.list.with_infobar(label: 'Story').map do |t|
       t.join
       +infobar
-      t[:result]
-    end
+      [ t[:order], t[:result] ]
+    end.sort_by(&:first).transpose[1]
   end
 
   def fetch_statuses(pivotal_ids)

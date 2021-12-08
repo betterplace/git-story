@@ -494,8 +494,9 @@ class Git::Story::App
   end
 
   def fetch_story(story_id, with_owner: false)
-    story = pivotal_get("projects/#{pivotal_project}/stories/#{story_id}").full?
-    story.owners = Array((fetch_story_owners(story_id) if with_owner))
+    if story = pivotal_get("projects/#{pivotal_project}/stories/#{story_id}").full?
+      story.owners = Array((fetch_story_owners(story_id) if with_owner))
+    end
     story
   end
 

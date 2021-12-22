@@ -230,6 +230,10 @@ class Git::Story::App
     attendees = Set[]
     fetch_stories(pivotal_ids) do |pid|
       story = fetch_story(pid, with_owner: true)
+      if !story
+        stories << "• ** Story with id #{pid} could not be found **"
+        next
+      end
       attendees.merge story.owners
       stories << <<~end
       • [##{story.id}] #{story.name}

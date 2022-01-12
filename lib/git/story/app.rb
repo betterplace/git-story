@@ -622,10 +622,13 @@ class Git::Story::App
     tg = ThreadGroup.new
     pivotal_ids.each do |pid|
       order = 0
-      tg.add Thread.new {
-        Thread.current[:order] = order
-        Thread.current[:result] = block.(pid)
-      }
+      tg.add(
+        Thread.new do
+          Thread.current[:order] = order
+          Thread.current[:result] = block.(pid)
+        rescue
+        end
+      )
     end
     tg.list.with_infobar(label: 'Story').map do |t|
       t.join

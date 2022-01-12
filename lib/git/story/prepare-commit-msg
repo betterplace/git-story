@@ -26,12 +26,8 @@ class CommitMesssageParser
   def parse(template)
     @message_data = template.readlines
     @message_data.each do |line|
-      if /^\s*\[.*(?:#\d+|TODO|(?<done>DONE)).*\]/i =~ line
+      if /^\s*\[.*(?:#\d{7,}).*\]/i =~ line
         @story_number_found = true
-        if @story_number_done  = !!done
-          @message_data.slice!(@line_index)
-          next
-        end
       end
       if line =~ /^\s*#/
         break
@@ -58,7 +54,7 @@ class CommitMesssageParser
 end
 
 story_numbers =
-  `git branch --no-color`.sub!(/^\* .*?(?:_(\d+(?:_\d+)*))$/) {
+  `git branch --no-color`.sub!(/^\* .*?(?:_(\d{7,}(?:_\d{7,})*))$/) {
     break $1.split(/_/)
   } || []
 story_numbers.map!(&:chomp)
@@ -67,8 +63,9 @@ Tempfile.open('commit') do |output|
     message_parsed = CommitMesssageParser.new.parse(template)
     if message_parsed.story_number_found?
       output.puts message_parsed.total
-    elsif complex_config.story.todo_nudging? && story_numbers.empty? && !message_parsed.story_number_done?
-      output.puts message_parsed.data, "", "[TODO]", "", message_parsed.footer
+    elsif story_numbers.empty?
+      template.rewind
+      output.puts template.read
     else
       full_message = [  message_parsed.data, "", ]
       if prefix = complex_config.story.pivotal_reference_prefix?

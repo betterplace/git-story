@@ -619,10 +619,10 @@ class Git::Story::App
 
   def fetch_stories(pivotal_ids, &block)
     block or raise ArgumentError, '&block parameter is required'
-    tg = ThreadGroup.new
+    threads = []
     pivotal_ids.each do |pid|
       order = 0
-      tg.add(
+      threads.push(
         Thread.new do
           Thread.current[:order] = order
           Thread.current[:result] = block.(pid)
@@ -630,11 +630,11 @@ class Git::Story::App
         end
       )
     end
-    tg.list.with_infobar(label: 'Story').map do |t|
+    threads.with_infobar(label: 'Story').map do |t|
       t.join
       +infobar
       [ t[:order], t[:result] ]
-    end.sort_by(&:first).transpose[1]
+    end.sort_by(&:first).transpose[1].to_a
   end
 
   def fetch_statuses(pivotal_ids)
